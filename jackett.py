@@ -1,7 +1,12 @@
 import re
 import requests
 import xml.etree.ElementTree as ET
-from config import JACKETT_URL, JACKETT_API_KEY
+from config import (
+    JACKETT_URL,
+    JACKETT_API_KEY,
+    JACKETT_TIMEOUT,
+    JACKETT_CONNECT_TIMEOUT,
+)
 
 # ---------------------------------------------------------------------------
 # Language / subtitle parsing
@@ -76,7 +81,11 @@ def parse_langs(title: str) -> tuple[str, str]:
 def search_torrents(query: str, limit: int = 8) -> list[dict]:
     url = f"{JACKETT_URL}/api/v2.0/indexers/all/results/torznab/api"
     params = {"apikey": JACKETT_API_KEY, "t": "search", "q": query}
-    r = requests.get(url, params=params, timeout=30)
+    # (connect, read): fail fast if Jackett is down, but allow a long read window
+    # since aggregating all indexers can be slow.
+    r = requests.get(
+        url, params=params, timeout=(JACKETT_CONNECT_TIMEOUT, JACKETT_TIMEOUT)
+    )
     r.raise_for_status()
 
     ns = {"torznab": "http://torznab.com/schemas/2015/feed"}

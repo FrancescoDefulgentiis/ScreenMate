@@ -13,7 +13,7 @@ try:
     from config import JELLYFIN_URL, JELLYFIN_API_KEY
 except ImportError:  # keep the bot working even if not configured yet
     JELLYFIN_URL = "http://localhost:8096"
-    JELLYFIN_API_KEY = "ba45ae51b8354a83851d94998db0c7da"
+    JELLYFIN_API_KEY = ""
 
 log = logging.getLogger("torrentbot.fladder")
 

@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env
+.env.example
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+media/
+README.md
+LICENSE

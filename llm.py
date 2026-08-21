@@ -1,7 +1,17 @@
 import json
 import logging
+import time
 import requests
-from config import OLLAMA_URL, OLLAMA_MODEL
+from config import (
+    OLLAMA_URL,
+    OLLAMA_MODEL,
+    OLLAMA_TIMEOUT,
+    OLLAMA_CONNECT_TIMEOUT,
+    OLLAMA_KEEP_ALIVE,
+    OLLAMA_NUM_PREDICT_INTENT,
+    OLLAMA_NUM_PREDICT_CHAT,
+    OLLAMA_RETRIES,
+)
 
 log = logging.getLogger("torrentbot.llm")
 
@@ -61,19 +71,71 @@ def _chat_system_prompt(lang: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _chat(messages: list[dict], temperature: float = 0.3,
-          force_json: bool = False) -> str:
-    """Call Ollama's /api/chat endpoint with proper role messages."""
+          force_json: bool = False, num_predict: int | None = None) -> str:
+    """Call Ollama's /api/chat endpoint with proper role messages.
+
+    Keeps the model resident (``keep_alive``) so we don't pay the load cost on
+    every message, caps the output length (``num_predict``) so a runaway reply
+    can't stall the bot, and retries only transient *connection* failures — a
+    slow generation (read timeout) is not retried, since that would just double
+    the wait.
+    """
+    options: dict = {"temperature": temperature}
+    if num_predict is not None:
+        options["num_predict"] = num_predict
+
     payload = {
         "model": OLLAMA_MODEL,
         "messages": messages,
         "stream": False,
-        "options": {"temperature": temperature},
+        "keep_alive": OLLAMA_KEEP_ALIVE,
+        "options": options,
     }
     if force_json:
         payload["format"] = "json"
-    resp = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=120)
-    resp.raise_for_status()
-    return resp.json()["message"]["content"].strip()
+
+    # (connect, read): fail fast if Ollama is unreachable, but allow a long read
+    # window for slow CPU generation.
+    timeout = (OLLAMA_CONNECT_TIMEOUT, OLLAMA_TIMEOUT)
+
+    last_err: Exception | None = None
+    attempts = max(1, OLLAMA_RETRIES)
+    for attempt in range(1, attempts + 1):
+        try:
+            resp = requests.post(
+                f"{OLLAMA_URL}/api/chat", json=payload, timeout=timeout
+            )
+            resp.raise_for_status()
+            return resp.json()["message"]["content"].strip()
+        except (requests.ConnectionError, requests.exceptions.ChunkedEncodingError) as e:
+            last_err = e
+            if attempt < attempts:
+                backoff = 1.5 * attempt
+                log.warning(
+                    "Ollama connection failed (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt, attempts, backoff, e,
+                )
+                time.sleep(backoff)
+    raise last_err  # type: ignore[misc]
+
+
+def warmup() -> bool:
+    """Preload the model into RAM so the first real message isn't slow.
+
+    Fired once at startup (best effort). Generating a single token is enough to
+    force Ollama to load the weights and keep them warm for ``OLLAMA_KEEP_ALIVE``.
+    """
+    try:
+        _chat(
+            [{"role": "user", "content": "hi"}],
+            temperature=0.0,
+            num_predict=1,
+        )
+        log.info("Ollama model '%s' warmed up", OLLAMA_MODEL)
+        return True
+    except Exception:
+        log.warning("Ollama warmup failed (model will load on first message)", exc_info=True)
+        return False
 
 
 def _extract_json(raw: str) -> dict:
@@ -112,7 +174,8 @@ def parse_intent(user_text: str, history: list[dict] | None = None) -> dict:
     })
 
     try:
-        raw = _chat(messages, temperature=0.1, force_json=True)
+        raw = _chat(messages, temperature=0.1, force_json=True,
+                    num_predict=OLLAMA_NUM_PREDICT_INTENT)
         data = _extract_json(raw)
     except Exception:
         log.exception("parse_intent: falling back to chat")
@@ -134,4 +197,4 @@ def chat_reply(history: list[dict], lang: str = "en") -> str:
     """Generate the movie-buddy conversational reply in the chosen language."""
     messages = [{"role": "system", "content": _chat_system_prompt(lang)}]
     messages.extend(history)
-    return _chat(messages, temperature=0.7)
+    return _chat(messages, temperature=0.7, num_predict=OLLAMA_NUM_PREDICT_CHAT)

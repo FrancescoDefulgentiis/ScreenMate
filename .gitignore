@@ -1,0 +1,15 @@
+# Secrets / local config
+.env
+
+# Per-user preferences (contains real Telegram user ids, written at runtime)
+data/prefs.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local media mount fallbacks
+media/

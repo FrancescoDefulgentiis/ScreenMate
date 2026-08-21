@@ -1,0 +1,25 @@
+services:
+  screenmate:
+    build: .
+    image: screenmate
+    container_name: screenmate
+    # Start automatically on boot (as soon as the Docker daemon starts) and
+    # restart the bot if it ever crashes.
+    restart: unless-stopped
+    # Share the host's network stack. On Linux this is the simplest way to let
+    # the bot reach Ollama, Jackett and qBittorrent running on the host: they
+    # are all reachable on plain localhost, with no host.docker.internal or
+    # extra_hosts needed, and Ollama does NOT need to be rebound to 0.0.0.0.
+    # (network_mode: host is a Linux-only feature.)
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      # Persist per-user preferences across restarts.
+      - ./data:/app/data
+      # Optional: only needed if the bot itself ever reads/writes the Jellyfin
+      # libraries. In the current design qBittorrent writes the files, so what
+      # matters is that QBIT_MOVIES_PATH / QBIT_TV_PATH in .env match the paths
+      # qBittorrent uses on the host.
+      - ${MOVIES_HOST_PATH:-./media/movies}:/media/movies
+      - ${TV_HOST_PATH:-./media/tv}:/media/tv
